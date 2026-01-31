@@ -1,0 +1,6 @@
+client_id,client_name,matcha_type,supplier,monthly_kg,cost_jpy,sell_price_sgd,discount
+CLI001,Greendot,Premium Ceremonial,Uji Farm,40,12000,125,0
+CLI002,Sweet Cheeks,Café Grade,Kyoto Farms,35,8000,95,5
+CLI002,Sweet Cheeks,Café Grade,Kyoto Farms,35,8000,95,5
+CLI003,Meta,Competition Grade,Shizuoka Premium,15,25000,280,0
+CLI004,Boutiques,Premium Ceremonial,Uji Farm,25,12000,130,0

@@ -1,0 +1,831 @@
+{
+  "name": "Matsu Matcha - Workflow 2: Profitability Engine",
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "api/profit",
+        "responseMode": "responseNode",
+        "options": {}
+      },
+      "id": "webhook-profit-api",
+      "name": "Profit API (POST /api/profit)",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 1,
+      "position": [250, 300],
+      "webhookId": "matsu-profit-api"
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "string": [
+            {
+              "value1": "={{ $('Webhook').item.json.headers['x-internal-token'] }}",
+              "value2": "={{ $env.INTERNAL_WEBHOOK_TOKEN }}"
+            }
+          ]
+        }
+      },
+      "id": "if-auth-check",
+      "name": "Auth Check",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 1,
+      "position": [450, 300]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ {\"ok\": false, \"error\": \"UNAUTHORIZED\", \"details\": [\"Invalid or missing X-Internal-Token header\"]} }}",
+        "options": {
+          "responseCode": 401
+        }
+      },
+      "id": "respond-unauthorized",
+      "name": "Respond Unauthorized",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1,
+      "position": [650, 450]
+    },
+    {
+      "parameters": {
+        "values": {
+          "string": [
+            {
+              "name": "client_name",
+              "value": "={{ $json.body.client_name || '' }}"
+            },
+            {
+              "name": "product_name",
+              "value": "={{ $json.body.product_name || '' }}"
+            },
+            {
+              "name": "time_period",
+              "value": "={{ $json.body.time_period || '' }}"
+            },
+            {
+              "name": "requester_phone_e164",
+              "value": "={{ $json.body.requester_phone_e164 || '' }}"
+            },
+            {
+              "name": "ts_now",
+              "value": "={{ new Date().toISOString() }}"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "set-normalize-inputs",
+      "name": "Normalize Inputs",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 2,
+      "position": [650, 200]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "string": [
+            {
+              "value1": "={{ $json.client_name }}",
+              "operation": "isNotEmpty"
+            }
+          ]
+        }
+      },
+      "id": "if-client-provided",
+      "name": "Client Name Provided?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 1,
+      "position": [850, 200]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ {\"ok\": false, \"error\": \"VALIDATION_ERROR\", \"details\": [\"client_name is required\"]} }}",
+        "options": {
+          "responseCode": 400
+        }
+      },
+      "id": "respond-missing-client",
+      "name": "Respond Missing Client",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1,
+      "position": [1050, 350]
+    },
+    {
+      "parameters": {
+        "operation": "read",
+        "documentId": "={{ $env.SHEET_ID }}",
+        "sheetName": "={{ $env.TAB_CLIENTS }}",
+        "filters": {
+          "conditions": [
+            {
+              "column": "client_name",
+              "condition": "equal",
+              "value": "={{ $json.client_name }}"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "sheets-clients-lookup",
+      "name": "Clients Lookup",
+      "type": "n8n-nodes-base.googleSheets",
+      "typeVersion": 4,
+      "position": [1050, 100],
+      "credentials": {
+        "googleSheetsOAuth2Api": {
+          "id": "google-sheets-oauth",
+          "name": "Google Sheets OAuth2"
+        }
+      },
+      "retryOnFail": true,
+      "maxTries": 2,
+      "waitBetweenTries": 2000
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "number": [
+            {
+              "value1": "={{ $json.length || 0 }}",
+              "operation": "larger",
+              "value2": 0
+            }
+          ]
+        }
+      },
+      "id": "if-client-found",
+      "name": "Client Found?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 1,
+      "position": [1250, 100]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ {\"ok\": false, \"error\": \"NOT_FOUND\", \"details\": [\"Client not found: \" + $json.client_name]} }}",
+        "options": {
+          "responseCode": 400
+        }
+      },
+      "id": "respond-client-not-found",
+      "name": "Respond Client Not Found",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1,
+      "position": [1450, 250]
+    },
+    {
+      "parameters": {
+        "mode": "runOnceForEachItem",
+        "jsCode": "return {\n  json: {\n    client_id: $input.item.json[0].client_id,\n    client_discount_percent: parseFloat($input.item.json[0].discount_percent) || 0,\n    client_name_confirmed: $input.item.json[0].client_name,\n    client_name_input: $input.item.json.client_name,\n    product_name_filter: $input.item.json.product_name\n  }\n};"
+      },
+      "id": "code-extract-client",
+      "name": "Extract Client Data",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1450, 50]
+    },
+    {
+      "parameters": {
+        "operation": "read",
+        "documentId": "={{ $env.SHEET_ID }}",
+        "sheetName": "={{ $env.TAB_CONTRACTS }}",
+        "filters": {
+          "conditions": [
+            {
+              "column": "client_id",
+              "condition": "equal",
+              "value": "={{ $json.client_id }}"
+            },
+            {
+              "column": "status",
+              "condition": "equal",
+              "value": "active"
+            }
+          ],
+          "combineConditions": "AND"
+        },
+        "options": {}
+      },
+      "id": "sheets-contracts-lookup",
+      "name": "Contracts Lookup",
+      "type": "n8n-nodes-base.googleSheets",
+      "typeVersion": 4,
+      "position": [1650, 50],
+      "credentials": {
+        "googleSheetsOAuth2Api": {
+          "id": "google-sheets-oauth",
+          "name": "Google Sheets OAuth2"
+        }
+      },
+      "retryOnFail": true,
+      "maxTries": 2,
+      "waitBetweenTries": 2000
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "number": [
+            {
+              "value1": "={{ $json.length || 0 }}",
+              "operation": "larger",
+              "value2": 0
+            }
+          ]
+        }
+      },
+      "id": "if-contracts-found",
+      "name": "Contracts Found?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 1,
+      "position": [1850, 50]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ {\"ok\": false, \"error\": \"NOT_FOUND\", \"details\": [\"No active contracts found for client: \" + $json.client_name_confirmed]} }}",
+        "options": {
+          "responseCode": 400
+        }
+      },
+      "id": "respond-no-contracts",
+      "name": "Respond No Contracts",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1,
+      "position": [2050, 200]
+    },
+    {
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "jsCode": "const items = $input.all();\nconst clientData = items[0].json;\n\nconst contracts = items.filter(item => {\n  if (clientData.product_name_filter && clientData.product_name_filter.trim() !== '') {\n    return item.json.product_name && item.json.product_name.toLowerCase().includes(clientData.product_name_filter.toLowerCase());\n  }\n  return true;\n});\n\nif (contracts.length === 0) {\n  return [{\n    json: {\n      error: 'NO_MATCHING_CONTRACTS',\n      client_name: clientData.client_name_confirmed\n    }\n  }];\n}\n\nreturn contracts.map(contract => ({\n  json: {\n    contract_id: contract.json.contract_id,\n    client_id: contract.json.client_id,\n    product_id: contract.json.product_id,\n    selling_price_sgd_per_kg: parseFloat(contract.json.selling_price_sgd_per_kg),\n    special_discount_percent: parseFloat(contract.json.special_discount_percent) || 0,\n    monthly_qty_kg: parseFloat(contract.json.monthly_qty_kg),\n    client_discount_percent: clientData.client_discount_percent,\n    client_name_confirmed: clientData.client_name_confirmed\n  }\n}));"
+      },
+      "id": "code-process-contracts",
+      "name": "Process Each Contract",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [2050, 50]
+    },
+    {
+      "parameters": {
+        "operation": "read",
+        "documentId": "={{ $env.SHEET_ID }}",
+        "sheetName": "={{ $env.TAB_PRODUCTS }}",
+        "filters": {
+          "conditions": [
+            {
+              "column": "product_id",
+              "condition": "equal",
+              "value": "={{ $json.product_id }}"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "sheets-products-lookup",
+      "name": "Products Lookup",
+      "type": "n8n-nodes-base.googleSheets",
+      "typeVersion": 4,
+      "position": [2250, 50],
+      "credentials": {
+        "googleSheetsOAuth2Api": {
+          "id": "google-sheets-oauth",
+          "name": "Google Sheets OAuth2"
+        }
+      },
+      "retryOnFail": true,
+      "maxTries": 2,
+      "waitBetweenTries": 2000
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "number": [
+            {
+              "value1": "={{ $json.length || 0 }}",
+              "operation": "larger",
+              "value2": 0
+            }
+          ]
+        }
+      },
+      "id": "if-product-found",
+      "name": "Product Found?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 1,
+      "position": [2450, 50]
+    },
+    {
+      "parameters": {
+        "mode": "runOnceForEachItem",
+        "jsCode": "const contract = $input.item.json;\nconst product = $input.item.json[0];\n\n// Parse all numeric values safely\nconst cost_jpy_per_kg = parseFloat(product.cost_jpy_per_kg);\nconst fx_jpy_to_sgd = parseFloat(product.fx_jpy_to_sgd);\nconst shipping_sgd_per_kg = parseFloat(product.shipping_sgd_per_kg) || parseFloat($env.DEFAULT_SHIPPING_SGD_PER_KG);\nconst import_tax_rate = parseFloat(product.import_tax_rate) || parseFloat($env.DEFAULT_IMPORT_TAX_RATE);\n\nconst selling_price_sgd_per_kg = parseFloat(contract.selling_price_sgd_per_kg);\nconst special_discount_percent = parseFloat(contract.special_discount_percent) || 0;\nconst client_discount_percent = parseFloat(contract.client_discount_percent) || 0;\nconst monthly_qty_kg = parseFloat(contract.monthly_qty_kg);\n\n// Validate all required values are numbers\nif (isNaN(cost_jpy_per_kg) || isNaN(fx_jpy_to_sgd) || isNaN(selling_price_sgd_per_kg) || isNaN(monthly_qty_kg)) {\n  return {\n    json: {\n      error: 'MISSING_DATA',\n      product_id: product.product_id,\n      product_name: product.product_name,\n      details: 'Missing or invalid numeric data for cost calculation',\n      client_name: contract.client_name_confirmed\n    }\n  };\n}\n\n// Calculate landed cost\nconst cost_sgd_per_kg = cost_jpy_per_kg * fx_jpy_to_sgd;\nconst landed_cost_sgd_per_kg = (cost_sgd_per_kg + shipping_sgd_per_kg) * (1 + import_tax_rate);\n\n// Calculate effective selling price\nconst effective_selling_price = \n  selling_price_sgd_per_kg * \n  (1 - special_discount_percent / 100) * \n  (1 - client_discount_percent / 100);\n\n// Calculate profit\nconst profit_per_kg = effective_selling_price - landed_cost_sgd_per_kg;\nconst monthly_profit = profit_per_kg * monthly_qty_kg;\n\n// Calculate margin percentage\nconst margin_percent = effective_selling_price > 0 ? (profit_per_kg / effective_selling_price) * 100 : 0;\n\nreturn {\n  json: {\n    product_id: product.product_id,\n    product_name: product.product_name,\n    grade: product.grade,\n    supplier_id: product.supplier_id,\n    landed_cost_sgd_per_kg: Math.round(landed_cost_sgd_per_kg * 100) / 100,\n    effective_selling_price: Math.round(effective_selling_price * 100) / 100,\n    profit_per_kg: Math.round(profit_per_kg * 100) / 100,\n    monthly_qty_kg: monthly_qty_kg,\n    monthly_profit: Math.round(monthly_profit * 100) / 100,\n    margin_percent: Math.round(margin_percent * 10) / 10,\n    client_name: contract.client_name_confirmed,\n    contract_id: contract.contract_id,\n    cost_breakdown: {\n      cost_jpy_per_kg: cost_jpy_per_kg,\n      fx_rate: fx_jpy_to_sgd,\n      cost_sgd_per_kg: Math.round(cost_sgd_per_kg * 100) / 100,\n      shipping_sgd_per_kg: shipping_sgd_per_kg,\n      import_tax_rate: import_tax_rate\n    },\n    discount_breakdown: {\n      base_selling_price: selling_price_sgd_per_kg,\n      special_discount_percent: special_discount_percent,\n      client_discount_percent: client_discount_percent\n    }\n  }\n};"
+      },
+      "id": "code-calculate-profit",
+      "name": "Calculate Profitability",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [2650, 50]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "string": [
+            {
+              "value1": "={{ $json.error }}",
+              "operation": "isNotEmpty"
+            }
+          ]
+        }
+      },
+      "id": "if-has-errors",
+      "name": "Has Calculation Errors?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 1,
+      "position": [2850, 50]
+    },
+    {
+      "parameters": {
+        "values": {
+          "string": [
+            {
+              "name": "alert_type",
+              "value": "MISSING_DATA_PROFIT_CALC"
+            },
+            {
+              "name": "alert_message",
+              "value": "=Missing data for profit calculation: {{ $json.details }}"
+            },
+            {
+              "name": "severity",
+              "value": "MEDIUM"
+            },
+            {
+              "name": "entity_type",
+              "value": "product"
+            },
+            {
+              "name": "entity_id",
+              "value": "={{ $json.product_id }}"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "set-error-alert",
+      "name": "Prepare Error Alert",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 2,
+      "position": [3050, 200]
+    },
+    {
+      "parameters": {
+        "sendTo": "={{ $env.OWNER_EMAIL }}",
+        "subject": "[MatsuOps] Missing Data in Profit Calculation",
+        "message": "=Timestamp: {{ new Date().toISOString() }}\nWorkflow: Workflow 2 - Profitability Engine\nError: Missing or invalid numeric data\nProduct ID: {{ $json.entity_id }}\nProduct Name: {{ $json.product_name }}\nClient: {{ $json.client_name }}\n\nAction Required: Check Products sheet for complete cost data.",
+        "options": {}
+      },
+      "id": "gmail-alert-missing-data",
+      "name": "Alert Owner - Missing Data",
+      "type": "n8n-nodes-base.gmail",
+      "typeVersion": 2,
+      "position": [3250, 200],
+      "credentials": {
+        "gmailOAuth2": {
+          "id": "gmail-oauth",
+          "name": "Gmail OAuth2"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ {\"ok\": false, \"error\": \"MISSING_DATA\", \"details\": [$json.details]} }}",
+        "options": {
+          "responseCode": 400
+        }
+      },
+      "id": "respond-missing-data",
+      "name": "Respond Missing Data Error",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1,
+      "position": [3450, 200]
+    },
+    {
+      "parameters": {
+        "operation": "update",
+        "documentId": "={{ $env.SHEET_ID }}",
+        "sheetName": "={{ $env.TAB_PRODUCTS }}",
+        "columns": {
+          "mappings": [
+            {
+              "column": "product_id",
+              "value": "={{ $json.product_id }}"
+            },
+            {
+              "column": "landed_cost_sgd_per_kg",
+              "value": "={{ $json.landed_cost_sgd_per_kg }}"
+            },
+            {
+              "column": "updated_at",
+              "value": "={{ new Date().toISOString() }}"
+            }
+          ]
+        },
+        "options": {
+          "lookupColumn": "product_id"
+        }
+      },
+      "id": "sheets-update-landed-cost",
+      "name": "Products Update Landed Cost",
+      "type": "n8n-nodes-base.googleSheets",
+      "typeVersion": 4,
+      "position": [3050, 50],
+      "credentials": {
+        "googleSheetsOAuth2Api": {
+          "id": "google-sheets-oauth",
+          "name": "Google Sheets OAuth2"
+        }
+      },
+      "retryOnFail": true,
+      "maxTries": 2,
+      "waitBetweenTries": 2000
+    },
+    {
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "jsCode": "const results = $input.all();\n\nconst rows = results.map(item => ({\n  product_name: item.json.product_name,\n  grade: item.json.grade,\n  profit_per_kg: item.json.profit_per_kg,\n  monthly_profit: item.json.monthly_profit,\n  monthly_qty_kg: item.json.monthly_qty_kg,\n  landed_cost_sgd_per_kg: item.json.landed_cost_sgd_per_kg,\n  effective_selling_price: item.json.effective_selling_price,\n  margin_percent: item.json.margin_percent\n}));\n\nconst total_monthly_profit = rows.reduce((sum, row) => sum + row.monthly_profit, 0);\nconst total_monthly_qty = rows.reduce((sum, row) => sum + row.monthly_qty_kg, 0);\n\nreturn [{\n  json: {\n    client_name: results[0].json.client_name,\n    rows: rows,\n    summary: {\n      total_monthly_profit: Math.round(total_monthly_profit * 100) / 100,\n      total_monthly_qty_kg: total_monthly_qty,\n      product_count: rows.length\n    }\n  }\n}];"
+      },
+      "id": "code-aggregate-results",
+      "name": "Aggregate Results",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [3250, 50]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $env.LLM_API_URL }}",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "bodyParameters": {
+          "parameters": [
+            {
+              "name": "model",
+              "value": "gpt-4.1-mini"
+            },
+            {
+              "name": "temperature",
+              "value": "0.2"
+            },
+            {
+              "name": "messages",
+              "value": "={{ [{\"role\": \"system\", \"content\": \"You are a B2B operations assistant for Matsu Matcha. Write a concise WhatsApp reply (max 4 lines) summarizing profit analysis. Include 1 actionable insight. Respond ONLY with valid JSON: {\\\"reply_text\\\": \\\"...\\\"}\"}, {\"role\": \"user\", \"content\": \"Client: \" + $json.client_name + \"\\nTotal Monthly Profit: SGD \" + $json.summary.total_monthly_profit + \"\\nProducts: \" + $json.summary.product_count + \"\\nTotal Qty: \" + $json.summary.total_monthly_qty_kg + \" kg\\n\\nDetails:\\n\" + $json.rows.map(r => r.product_name + \": SGD \" + r.monthly_profit + \"/mo (\" + r.margin_percent + \"% margin)\").join(\"\\n\")}] }}"
+            }
+          ]
+        },
+        "options": {
+          "timeout": 15000
+        }
+      },
+      "id": "http-ai-reply-writer",
+      "name": "AI - Profit Reply Writer",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4,
+      "position": [3450, 50],
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "llm-api-auth",
+          "name": "LLM API Auth"
+        }
+      },
+      "retryOnFail": true,
+      "maxTries": 1,
+      "waitBetweenTries": 1000
+    },
+    {
+      "parameters": {
+        "mode": "runOnceForEachItem",
+        "jsCode": "try {\n  const aiContent = $input.item.json.choices?.[0]?.message?.content;\n  if (!aiContent) {\n    throw new Error('No AI response');\n  }\n  \n  const parsed = JSON.parse(aiContent);\n  \n  return {\n    json: {\n      reply_text: parsed.reply_text,\n      ai_valid: true\n    }\n  };\n} catch (error) {\n  // Fallback if AI fails\n  const prevData = $input.all()[0].json;\n  return {\n    json: {\n      reply_text: `${prevData.client_name}: Total profit SGD ${prevData.summary.total_monthly_profit}/mo from ${prevData.summary.product_count} products (${prevData.summary.total_monthly_qty_kg} kg).`,\n      ai_valid: false\n    }\n  };\n}"
+      },
+      "id": "code-parse-ai-reply",
+      "name": "Parse AI Reply",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [3650, 50]
+    },
+    {
+      "parameters": {
+        "mode": "mergeByPosition"
+      },
+      "id": "merge-reply-data",
+      "name": "Merge Reply with Data",
+      "type": "n8n-nodes-base.merge",
+      "typeVersion": 2,
+      "position": [3850, 50]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ {\"ok\": true, \"client_name\": $json.client_name, \"rows\": $json.rows, \"summary\": $json.summary, \"reply_text\": $json.reply_text} }}",
+        "options": {
+          "responseCode": 200
+        }
+      },
+      "id": "respond-success",
+      "name": "Respond Success",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1,
+      "position": [4050, 50]
+    }
+  ],
+  "connections": {
+    "Profit API (POST /api/profit)": {
+      "main": [
+        [
+          {
+            "node": "Auth Check",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Auth Check": {
+      "main": [
+        [
+          {
+            "node": "Normalize Inputs",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Respond Unauthorized",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Normalize Inputs": {
+      "main": [
+        [
+          {
+            "node": "Client Name Provided?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Client Name Provided?": {
+      "main": [
+        [
+          {
+            "node": "Clients Lookup",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Respond Missing Client",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Clients Lookup": {
+      "main": [
+        [
+          {
+            "node": "Client Found?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Client Found?": {
+      "main": [
+        [
+          {
+            "node": "Extract Client Data",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Respond Client Not Found",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Extract Client Data": {
+      "main": [
+        [
+          {
+            "node": "Contracts Lookup",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Contracts Lookup": {
+      "main": [
+        [
+          {
+            "node": "Contracts Found?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Contracts Found?": {
+      "main": [
+        [
+          {
+            "node": "Process Each Contract",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Respond No Contracts",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Process Each Contract": {
+      "main": [
+        [
+          {
+            "node": "Products Lookup",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Products Lookup": {
+      "main": [
+        [
+          {
+            "node": "Product Found?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Product Found?": {
+      "main": [
+        [
+          {
+            "node": "Calculate Profitability",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Calculate Profitability": {
+      "main": [
+        [
+          {
+            "node": "Has Calculation Errors?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Has Calculation Errors?": {
+      "main": [
+        [
+          {
+            "node": "Prepare Error Alert",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Products Update Landed Cost",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Prepare Error Alert": {
+      "main": [
+        [
+          {
+            "node": "Alert Owner - Missing Data",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Alert Owner - Missing Data": {
+      "main": [
+        [
+          {
+            "node": "Respond Missing Data Error",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Products Update Landed Cost": {
+      "main": [
+        [
+          {
+            "node": "Aggregate Results",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Aggregate Results": {
+      "main": [
+        [
+          {
+            "node": "AI - Profit Reply Writer",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Merge Reply with Data",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "AI - Profit Reply Writer": {
+      "main": [
+        [
+          {
+            "node": "Parse AI Reply",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Parse AI Reply": {
+      "main": [
+        [
+          {
+            "node": "Merge Reply with Data",
+            "type": "main",
+            "index": 1
+          }
+        ]
+      ]
+    },
+    "Merge Reply with Data": {
+      "main": [
+        [
+          {
+            "node": "Respond Success",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "staticData": null,
+  "tags": [],
+  "triggerCount": 1,
+  "updatedAt": "2026-01-31T10:00:00.000Z",
+  "versionId": "1"
+}

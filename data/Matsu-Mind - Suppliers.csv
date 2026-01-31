@@ -1,0 +1,5 @@
+supplier_id,supplier_name,country,lead_time_days,reliability_score
+SUP001,Uji Farm,Japan,14,9.8
+SUP002,Kyoto Farms,Japan,10,9
+SUP002,Kyoto Farms,Japan,10,9
+SUP003,Shizuoka Premium,Japan,12,9.5

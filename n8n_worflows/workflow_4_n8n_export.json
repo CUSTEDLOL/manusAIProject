@@ -1,0 +1,909 @@
+{
+  "name": "Matsu Matcha - Workflow 4: Supplier Swap Recommendation",
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "api/swap",
+        "responseMode": "responseNode",
+        "options": {}
+      },
+      "id": "webhook-swap-api",
+      "name": "Swap API (POST /api/swap)",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 1,
+      "position": [250, 300],
+      "webhookId": "matsu-swap-api"
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "string": [
+            {
+              "value1": "={{ $('Webhook').item.json.headers['x-internal-token'] }}",
+              "value2": "={{ $env.INTERNAL_WEBHOOK_TOKEN }}"
+            }
+          ]
+        }
+      },
+      "id": "if-auth-check",
+      "name": "Auth Check",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 1,
+      "position": [450, 300]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ {\"ok\": false, \"error\": \"UNAUTHORIZED\", \"details\": [\"Invalid or missing X-Internal-Token header\"]} }}",
+        "options": {
+          "responseCode": 401
+        }
+      },
+      "id": "respond-unauthorized",
+      "name": "Respond Unauthorized",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1,
+      "position": [650, 450]
+    },
+    {
+      "parameters": {
+        "values": {
+          "string": [
+            {
+              "name": "client_name",
+              "value": "={{ $json.body.client_name || '' }}"
+            },
+            {
+              "name": "product_name_filter",
+              "value": "={{ $json.body.product_name || '' }}"
+            },
+            {
+              "name": "requester_phone_e164",
+              "value": "={{ $json.body.requester_phone_e164 || '' }}"
+            },
+            {
+              "name": "ts_now",
+              "value": "={{ new Date().toISOString() }}"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "set-normalize-inputs",
+      "name": "Normalize Inputs",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 2,
+      "position": [650, 200]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "string": [
+            {
+              "value1": "={{ $json.client_name }}",
+              "operation": "isNotEmpty"
+            }
+          ]
+        }
+      },
+      "id": "if-client-provided",
+      "name": "Client Name Provided?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 1,
+      "position": [850, 200]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ {\"ok\": false, \"error\": \"VALIDATION_ERROR\", \"details\": [\"client_name is required\"]} }}",
+        "options": {
+          "responseCode": 400
+        }
+      },
+      "id": "respond-missing-client",
+      "name": "Respond Missing Client",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1,
+      "position": [1050, 350]
+    },
+    {
+      "parameters": {
+        "operation": "read",
+        "documentId": "={{ $env.SHEET_ID }}",
+        "sheetName": "={{ $env.TAB_CLIENTS }}",
+        "filters": {
+          "conditions": [
+            {
+              "column": "client_name",
+              "condition": "equal",
+              "value": "={{ $json.client_name }}"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "sheets-clients-lookup",
+      "name": "Clients Lookup",
+      "type": "n8n-nodes-base.googleSheets",
+      "typeVersion": 4,
+      "position": [1050, 100],
+      "credentials": {
+        "googleSheetsOAuth2Api": {
+          "id": "google-sheets-oauth",
+          "name": "Google Sheets OAuth2"
+        }
+      },
+      "retryOnFail": true,
+      "maxTries": 2,
+      "waitBetweenTries": 2000
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "number": [
+            {
+              "value1": "={{ $json.length || 0 }}",
+              "operation": "larger",
+              "value2": 0
+            }
+          ]
+        }
+      },
+      "id": "if-client-found",
+      "name": "Client Found?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 1,
+      "position": [1250, 100]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ {\"ok\": false, \"error\": \"NOT_FOUND\", \"details\": [\"Client not found: \" + $json.client_name]} }}",
+        "options": {
+          "responseCode": 400
+        }
+      },
+      "id": "respond-client-not-found",
+      "name": "Respond Client Not Found",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1,
+      "position": [1450, 250]
+    },
+    {
+      "parameters": {
+        "mode": "runOnceForEachItem",
+        "jsCode": "return {\n  json: {\n    client_id: $input.item.json[0].client_id,\n    client_discount_percent: parseFloat($input.item.json[0].discount_percent) || 0,\n    client_name_confirmed: $input.item.json[0].client_name,\n    product_name_filter: $input.item.json.product_name_filter\n  }\n};"
+      },
+      "id": "code-extract-client",
+      "name": "Extract Client Data",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1450, 50]
+    },
+    {
+      "parameters": {
+        "operation": "read",
+        "documentId": "={{ $env.SHEET_ID }}",
+        "sheetName": "={{ $env.TAB_CONTRACTS }}",
+        "filters": {
+          "conditions": [
+            {
+              "column": "client_id",
+              "condition": "equal",
+              "value": "={{ $json.client_id }}"
+            },
+            {
+              "column": "status",
+              "condition": "equal",
+              "value": "active"
+            }
+          ],
+          "combineConditions": "AND"
+        },
+        "options": {}
+      },
+      "id": "sheets-contracts-lookup",
+      "name": "Contracts Lookup",
+      "type": "n8n-nodes-base.googleSheets",
+      "typeVersion": 4,
+      "position": [1650, 50],
+      "credentials": {
+        "googleSheetsOAuth2Api": {
+          "id": "google-sheets-oauth",
+          "name": "Google Sheets OAuth2"
+        }
+      },
+      "retryOnFail": true,
+      "maxTries": 2,
+      "waitBetweenTries": 2000
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "number": [
+            {
+              "value1": "={{ $json.length || 0 }}",
+              "operation": "larger",
+              "value2": 0
+            }
+          ]
+        }
+      },
+      "id": "if-contracts-found",
+      "name": "Contracts Found?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 1,
+      "position": [1850, 50]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ {\"ok\": false, \"error\": \"NOT_FOUND\", \"details\": [\"No active contracts found for client\"]} }}",
+        "options": {
+          "responseCode": 400
+        }
+      },
+      "id": "respond-no-contracts",
+      "name": "Respond No Contracts",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1,
+      "position": [2050, 200]
+    },
+    {
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "jsCode": "const items = $input.all();\nconst clientData = items[0].json;\n\nconst contracts = items.filter(item => {\n  if (clientData.product_name_filter && clientData.product_name_filter.trim() !== '') {\n    return item.json.product_name && item.json.product_name.toLowerCase().includes(clientData.product_name_filter.toLowerCase());\n  }\n  return true;\n});\n\nif (contracts.length === 0) {\n  return [{\n    json: {\n      error: 'NO_MATCHING_CONTRACTS',\n      client_name: clientData.client_name_confirmed\n    }\n  }];\n}\n\nreturn contracts.map(contract => ({\n  json: {\n    contract_id: contract.json.contract_id,\n    client_id: contract.json.client_id,\n    product_id: contract.json.product_id,\n    selling_price_sgd_per_kg: parseFloat(contract.json.selling_price_sgd_per_kg),\n    special_discount_percent: parseFloat(contract.json.special_discount_percent) || 0,\n    monthly_qty_kg: parseFloat(contract.json.monthly_qty_kg),\n    client_discount_percent: clientData.client_discount_percent,\n    client_name_confirmed: clientData.client_name_confirmed,\n    product_name_filter: clientData.product_name_filter\n  }\n}));"
+      },
+      "id": "code-process-contracts",
+      "name": "Process Each Contract",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [2050, 50]
+    },
+    {
+      "parameters": {
+        "operation": "read",
+        "documentId": "={{ $env.SHEET_ID }}",
+        "sheetName": "={{ $env.TAB_PRODUCTS }}",
+        "filters": {
+          "conditions": [
+            {
+              "column": "product_id",
+              "condition": "equal",
+              "value": "={{ $json.product_id }}"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "sheets-current-product",
+      "name": "Current Product Lookup",
+      "type": "n8n-nodes-base.googleSheets",
+      "typeVersion": 4,
+      "position": [2250, 50],
+      "credentials": {
+        "googleSheetsOAuth2Api": {
+          "id": "google-sheets-oauth",
+          "name": "Google Sheets OAuth2"
+        }
+      },
+      "retryOnFail": true,
+      "maxTries": 2,
+      "waitBetweenTries": 2000
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "number": [
+            {
+              "value1": "={{ $json.length || 0 }}",
+              "operation": "larger",
+              "value2": 0
+            }
+          ]
+        }
+      },
+      "id": "if-product-found",
+      "name": "Current Product Found?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 1,
+      "position": [2450, 50]
+    },
+    {
+      "parameters": {
+        "mode": "runOnceForEachItem",
+        "jsCode": "const contract = $input.item.json;\nconst product = $input.item.json[0];\n\nconst cost_jpy_per_kg = parseFloat(product.cost_jpy_per_kg);\nconst fx_jpy_to_sgd = parseFloat(product.fx_jpy_to_sgd);\nconst shipping_sgd_per_kg = parseFloat(product.shipping_sgd_per_kg) || parseFloat($env.DEFAULT_SHIPPING_SGD_PER_KG);\nconst import_tax_rate = parseFloat(product.import_tax_rate) || parseFloat($env.DEFAULT_IMPORT_TAX_RATE);\n\nconst selling_price_sgd_per_kg = parseFloat(contract.selling_price_sgd_per_kg);\nconst special_discount_percent = parseFloat(contract.special_discount_percent) || 0;\nconst client_discount_percent = parseFloat(contract.client_discount_percent) || 0;\nconst monthly_qty_kg = parseFloat(contract.monthly_qty_kg);\n\nif (isNaN(cost_jpy_per_kg) || isNaN(fx_jpy_to_sgd) || isNaN(selling_price_sgd_per_kg) || isNaN(monthly_qty_kg)) {\n  return {\n    json: {\n      error: 'MISSING_DATA',\n      product_id: product.product_id,\n      details: 'Missing numeric data for current product'\n    }\n  };\n}\n\nconst cost_sgd_per_kg = cost_jpy_per_kg * fx_jpy_to_sgd;\nconst landed_cost_sgd_per_kg = (cost_sgd_per_kg + shipping_sgd_per_kg) * (1 + import_tax_rate);\n\nconst effective_selling_price = \n  selling_price_sgd_per_kg * \n  (1 - special_discount_percent / 100) * \n  (1 - client_discount_percent / 100);\n\nconst profit_per_kg = effective_selling_price - landed_cost_sgd_per_kg;\nconst monthly_profit = profit_per_kg * monthly_qty_kg;\n\nreturn {\n  json: {\n    contract_id: contract.contract_id,\n    client_name: contract.client_name_confirmed,\n    current_product_id: product.product_id,\n    current_product_name: product.product_name,\n    current_grade: product.grade,\n    current_quality_score: parseFloat(product.quality_score_0_100) || 0,\n    current_supplier_id: product.supplier_id,\n    current_landed_cost: Math.round(landed_cost_sgd_per_kg * 100) / 100,\n    current_profit_per_kg: Math.round(profit_per_kg * 100) / 100,\n    current_monthly_profit: Math.round(monthly_profit * 100) / 100,\n    selling_price_sgd_per_kg: selling_price_sgd_per_kg,\n    special_discount_percent: special_discount_percent,\n    client_discount_percent: client_discount_percent,\n    monthly_qty_kg: monthly_qty_kg,\n    product_name_filter: contract.product_name_filter\n  }\n};"
+      },
+      "id": "code-calc-current",
+      "name": "Calculate Current Profitability",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [2650, 50]
+    },
+    {
+      "parameters": {
+        "operation": "read",
+        "documentId": "={{ $env.SHEET_ID }}",
+        "sheetName": "={{ $env.TAB_PRODUCTS }}",
+        "options": {}
+      },
+      "id": "sheets-read-all-products",
+      "name": "Read All Products",
+      "type": "n8n-nodes-base.googleSheets",
+      "typeVersion": 4,
+      "position": [2850, 50],
+      "credentials": {
+        "googleSheetsOAuth2Api": {
+          "id": "google-sheets-oauth",
+          "name": "Google Sheets OAuth2"
+        }
+      },
+      "retryOnFail": true,
+      "maxTries": 2,
+      "waitBetweenTries": 2000
+    },
+    {
+      "parameters": {
+        "mode": "runOnceForEachItem",
+        "jsCode": "const current = $input.item.json;\nconst allProducts = $('Read All Products').all().map(item => item.json);\n\nconst gradeRank = {\n  'competition': 5,\n  'ceremonial': 4,\n  'premium': 3,\n  'cafe': 2,\n  'culinary': 1\n};\n\nconst currentGradeRank = gradeRank[current.current_grade.toLowerCase()] || 0;\n\nconst alternatives = allProducts.filter(p => {\n  if (p.product_id === current.current_product_id) return false;\n  \n  const altGradeRank = gradeRank[p.grade.toLowerCase()] || 0;\n  const altQualityScore = parseFloat(p.quality_score_0_100) || 0;\n  \n  return altGradeRank >= currentGradeRank && altQualityScore >= current.current_quality_score;\n});\n\nconst rankedAlternatives = alternatives.map(alt => {\n  const cost_jpy_per_kg = parseFloat(alt.cost_jpy_per_kg);\n  const fx_jpy_to_sgd = parseFloat(alt.fx_jpy_to_sgd);\n  const shipping_sgd_per_kg = parseFloat(alt.shipping_sgd_per_kg) || parseFloat($env.DEFAULT_SHIPPING_SGD_PER_KG);\n  const import_tax_rate = parseFloat(alt.import_tax_rate) || parseFloat($env.DEFAULT_IMPORT_TAX_RATE);\n  \n  if (isNaN(cost_jpy_per_kg) || isNaN(fx_jpy_to_sgd)) {\n    return null;\n  }\n  \n  const cost_sgd_per_kg = cost_jpy_per_kg * fx_jpy_to_sgd;\n  const landed_cost_sgd_per_kg = (cost_sgd_per_kg + shipping_sgd_per_kg) * (1 + import_tax_rate);\n  \n  const effective_selling_price = \n    current.selling_price_sgd_per_kg * \n    (1 - current.special_discount_percent / 100) * \n    (1 - current.client_discount_percent / 100);\n  \n  const profit_per_kg = effective_selling_price - landed_cost_sgd_per_kg;\n  const monthly_profit = profit_per_kg * current.monthly_qty_kg;\n  const savings_vs_current = monthly_profit - current.current_monthly_profit;\n  \n  return {\n    product_id: alt.product_id,\n    product_name: alt.product_name,\n    grade: alt.grade,\n    quality_score: parseFloat(alt.quality_score_0_100) || 0,\n    supplier_id: alt.supplier_id,\n    landed_cost_sgd_per_kg: Math.round(landed_cost_sgd_per_kg * 100) / 100,\n    profit_per_kg: Math.round(profit_per_kg * 100) / 100,\n    monthly_profit: Math.round(monthly_profit * 100) / 100,\n    savings_vs_current: Math.round(savings_vs_current * 100) / 100\n  };\n}).filter(alt => alt !== null);\n\nrankedAlternatives.sort((a, b) => b.savings_vs_current - a.savings_vs_current);\n\nconst top3 = rankedAlternatives.slice(0, 3);\n\nreturn {\n  json: {\n    ...current,\n    alternatives: rankedAlternatives,\n    top_alternatives: top3,\n    best_alternative: top3.length > 0 ? top3[0] : null\n  }\n};"
+      },
+      "id": "code-find-alternatives",
+      "name": "Find and Rank Alternatives",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [3050, 50]
+    },
+    {
+      "parameters": {
+        "mode": "runOnceForEachItem",
+        "jsCode": "const data = $input.item.json;\nconst threshold = parseFloat($env.SWAP_MIN_SAVINGS_SGD) || 200;\n\nlet action = 'KEEP';\nlet reason = '';\nlet recommended_product_id = null;\nlet estimated_monthly_savings_sgd = 0;\n\nif (!data.best_alternative) {\n  action = 'KEEP';\n  reason = 'No viable alternatives found that meet quality and grade criteria.';\n} else if (data.best_alternative.savings_vs_current < threshold) {\n  action = 'KEEP';\n  reason = `Best alternative saves only SGD ${data.best_alternative.savings_vs_current}/mo, below threshold of SGD ${threshold}/mo.`;\n} else {\n  action = 'SWAP';\n  reason = `Swap to ${data.best_alternative.product_name} saves SGD ${data.best_alternative.savings_vs_current}/mo with ${data.best_alternative.grade} grade (quality ${data.best_alternative.quality_score}).`;\n  recommended_product_id = data.best_alternative.product_id;\n  estimated_monthly_savings_sgd = data.best_alternative.savings_vs_current;\n}\n\nreturn {\n  json: {\n    ...data,\n    recommendation: {\n      action: action,\n      reason: reason,\n      from_product_id: data.current_product_id,\n      from_product_name: data.current_product_name,\n      to_product_id: recommended_product_id,\n      to_product_name: data.best_alternative ? data.best_alternative.product_name : null,\n      estimated_monthly_savings_sgd: estimated_monthly_savings_sgd\n    }\n  }\n};"
+      },
+      "id": "code-determine-swap",
+      "name": "Determine Swap Recommendation",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [3250, 50]
+    },
+    {
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "jsCode": "const items = $input.all();\n\nconst recommendations = items.map(item => ({\n  contract_id: item.json.contract_id,\n  current_product: {\n    product_id: item.json.current_product_id,\n    product_name: item.json.current_product_name,\n    grade: item.json.current_grade,\n    monthly_profit: item.json.current_monthly_profit\n  },\n  recommendation: item.json.recommendation,\n  top_alternatives: item.json.top_alternatives\n}));\n\nconst swap_count = recommendations.filter(r => r.recommendation.action === 'SWAP').length;\nconst total_potential_savings = recommendations.reduce((sum, r) => \n  sum + r.recommendation.estimated_monthly_savings_sgd, 0\n);\n\nreturn [{\n  json: {\n    client_name: items[0].json.client_name,\n    recommendations: recommendations,\n    summary: {\n      total_contracts: recommendations.length,\n      swap_recommended_count: swap_count,\n      total_potential_savings_sgd: Math.round(total_potential_savings * 100) / 100\n    }\n  }\n}];"
+      },
+      "id": "code-aggregate-recommendations",
+      "name": "Aggregate All Recommendations",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [3450, 50]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $env.LLM_API_URL }}",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "bodyParameters": {
+          "parameters": [
+            {
+              "name": "model",
+              "value": "gpt-4.1-mini"
+            },
+            {
+              "name": "temperature",
+              "value": "0.2"
+            },
+            {
+              "name": "messages",
+              "value": "={{ [{\"role\": \"system\", \"content\": \"You are a B2B operations assistant for Matsu Matcha. Write a concise WhatsApp reply (max 4 lines) with supplier/product swap recommendations. Include savings and quality notes. Respond ONLY with valid JSON: {\\\"reply_text\\\": \\\"...}\\\"}\"}, {\"role\": \"user\", \"content\": \"Client: \" + $json.client_name + \"\\nContracts Analyzed: \" + $json.summary.total_contracts + \"\\nSwaps Recommended: \" + $json.summary.swap_recommended_count + \"\\nTotal Potential Savings: SGD \" + $json.summary.total_potential_savings_sgd + \"/mo\\n\\nDetails:\\n\" + $json.recommendations.map(r => r.current_product.product_name + \": \" + r.recommendation.action + \" - \" + r.recommendation.reason).join(\"\\n\")}] }}"
+            }
+          ]
+        },
+        "options": {
+          "timeout": 15000
+        }
+      },
+      "id": "http-ai-swap-reply",
+      "name": "AI - Swap Reply Writer",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4,
+      "position": [3650, 50],
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "llm-api-auth",
+          "name": "LLM API Auth"
+        }
+      },
+      "retryOnFail": true,
+      "maxTries": 1,
+      "waitBetweenTries": 1000
+    },
+    {
+      "parameters": {
+        "mode": "runOnceForEachItem",
+        "jsCode": "try {\n  const aiContent = $input.item.json.choices?.[0]?.message?.content;\n  if (!aiContent) {\n    throw new Error('No AI response');\n  }\n  \n  const parsed = JSON.parse(aiContent);\n  \n  return {\n    json: {\n      reply_text: parsed.reply_text,\n      ai_valid: true\n    }\n  };\n} catch (error) {\n  const prevData = $input.all()[0].json;\n  const swaps = prevData.recommendations.filter(r => r.recommendation.action === 'SWAP');\n  \n  let fallback = `${prevData.client_name}: Analyzed ${prevData.summary.total_contracts} contracts.`;\n  if (swaps.length > 0) {\n    fallback += ` 💡 ${swaps.length} swap(s) recommended, saving SGD ${prevData.summary.total_potential_savings_sgd}/mo.`;\n  } else {\n    fallback += ` Current suppliers optimal.`;\n  }\n  \n  return {\n    json: {\n      reply_text: fallback,\n      ai_valid: false\n    }\n  };\n}"
+      },
+      "id": "code-parse-ai-reply",
+      "name": "Parse AI Reply",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [3850, 50]
+    },
+    {
+      "parameters": {
+        "mode": "mergeByPosition"
+      },
+      "id": "merge-reply-data",
+      "name": "Merge Reply with Data",
+      "type": "n8n-nodes-base.merge",
+      "typeVersion": 2,
+      "position": [4050, 50]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "number": [
+            {
+              "value1": "={{ $json.summary.swap_recommended_count }}",
+              "operation": "larger",
+              "value2": 0
+            }
+          ]
+        }
+      },
+      "id": "if-any-swaps",
+      "name": "Any Swaps Recommended?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 1,
+      "position": [4250, 50]
+    },
+    {
+      "parameters": {
+        "values": {
+          "string": [
+            {
+              "name": "alert_id",
+              "value": "={{ $now.format('uuid') }}"
+            },
+            {
+              "name": "alert_type",
+              "value": "SWAP_RECOMMENDATION"
+            },
+            {
+              "name": "severity",
+              "value": "Medium"
+            },
+            {
+              "name": "entity_type",
+              "value": "client"
+            },
+            {
+              "name": "entity_id",
+              "value": "={{ $json.client_name }}"
+            },
+            {
+              "name": "alert_message",
+              "value": "=Swap recommendation for {{ $json.client_name }}: {{ $json.summary.swap_recommended_count }} swaps could save SGD {{ $json.summary.total_potential_savings_sgd }}/mo."
+            },
+            {
+              "name": "dedupe_key",
+              "value": "=swap:{{ $json.client_name }}:{{ new Date().toISOString().split('T')[0] }}"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "set-swap-alert",
+      "name": "Prepare Swap Alert",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 2,
+      "position": [4450, 0]
+    },
+    {
+      "parameters": {
+        "operation": "append",
+        "documentId": "={{ $env.SHEET_ID }}",
+        "sheetName": "={{ $env.TAB_ALERTS }}",
+        "columns": {
+          "mappings": [
+            {
+              "column": "alert_id",
+              "value": "={{ $json.alert_id }}"
+            },
+            {
+              "column": "type",
+              "value": "={{ $json.alert_type }}"
+            },
+            {
+              "column": "severity",
+              "value": "={{ $json.severity }}"
+            },
+            {
+              "column": "entity_type",
+              "value": "={{ $json.entity_type }}"
+            },
+            {
+              "column": "entity_id",
+              "value": "={{ $json.entity_id }}"
+            },
+            {
+              "column": "message",
+              "value": "={{ $json.alert_message }}"
+            },
+            {
+              "column": "created_at",
+              "value": "={{ new Date().toISOString() }}"
+            },
+            {
+              "column": "resolved",
+              "value": "false"
+            },
+            {
+              "column": "dedupe_key",
+              "value": "={{ $json.dedupe_key }}"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "sheets-alerts-insert",
+      "name": "Alerts - Insert Swap Recommendation",
+      "type": "n8n-nodes-base.googleSheets",
+      "typeVersion": 4,
+      "position": [4650, 0],
+      "credentials": {
+        "googleSheetsOAuth2Api": {
+          "id": "google-sheets-oauth",
+          "name": "Google Sheets OAuth2"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "mode": "append"
+      },
+      "id": "merge-alert-path",
+      "name": "Merge Alert Path",
+      "type": "n8n-nodes-base.merge",
+      "typeVersion": 2,
+      "position": [4850, 50]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ {\"ok\": true, \"client_name\": $json.client_name, \"recommendations\": $json.recommendations, \"summary\": $json.summary, \"reply_text\": $json.reply_text} }}",
+        "options": {
+          "responseCode": 200
+        }
+      },
+      "id": "respond-success",
+      "name": "Respond Success",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1,
+      "position": [5050, 50]
+    }
+  ],
+  "connections": {
+    "Swap API (POST /api/swap)": {
+      "main": [
+        [
+          {
+            "node": "Auth Check",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Auth Check": {
+      "main": [
+        [
+          {
+            "node": "Normalize Inputs",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Respond Unauthorized",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Normalize Inputs": {
+      "main": [
+        [
+          {
+            "node": "Client Name Provided?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Client Name Provided?": {
+      "main": [
+        [
+          {
+            "node": "Clients Lookup",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Respond Missing Client",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Clients Lookup": {
+      "main": [
+        [
+          {
+            "node": "Client Found?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Client Found?": {
+      "main": [
+        [
+          {
+            "node": "Extract Client Data",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Respond Client Not Found",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Extract Client Data": {
+      "main": [
+        [
+          {
+            "node": "Contracts Lookup",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Contracts Lookup": {
+      "main": [
+        [
+          {
+            "node": "Contracts Found?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Contracts Found?": {
+      "main": [
+        [
+          {
+            "node": "Process Each Contract",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Respond No Contracts",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Process Each Contract": {
+      "main": [
+        [
+          {
+            "node": "Current Product Lookup",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Current Product Lookup": {
+      "main": [
+        [
+          {
+            "node": "Current Product Found?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Current Product Found?": {
+      "main": [
+        [
+          {
+            "node": "Calculate Current Profitability",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Calculate Current Profitability": {
+      "main": [
+        [
+          {
+            "node": "Read All Products",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Read All Products": {
+      "main": [
+        [
+          {
+            "node": "Find and Rank Alternatives",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Find and Rank Alternatives": {
+      "main": [
+        [
+          {
+            "node": "Determine Swap Recommendation",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Determine Swap Recommendation": {
+      "main": [
+        [
+          {
+            "node": "Aggregate All Recommendations",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Aggregate All Recommendations": {
+      "main": [
+        [
+          {
+            "node": "AI - Swap Reply Writer",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Merge Reply with Data",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "AI - Swap Reply Writer": {
+      "main": [
+        [
+          {
+            "node": "Parse AI Reply",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Parse AI Reply": {
+      "main": [
+        [
+          {
+            "node": "Merge Reply with Data",
+            "type": "main",
+            "index": 1
+          }
+        ]
+      ]
+    },
+    "Merge Reply with Data": {
+      "main": [
+        [
+          {
+            "node": "Any Swaps Recommended?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Any Swaps Recommended?": {
+      "main": [
+        [
+          {
+            "node": "Prepare Swap Alert",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Merge Alert Path",
+            "type": "main",
+            "index": 1
+          }
+        ]
+      ]
+    },
+    "Prepare Swap Alert": {
+      "main": [
+        [
+          {
+            "node": "Alerts - Insert Swap Recommendation",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Alerts - Insert Swap Recommendation": {
+      "main": [
+        [
+          {
+            "node": "Merge Alert Path",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Merge Alert Path": {
+      "main": [
+        [
+          {
+            "node": "Respond Success",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "staticData": null,
+  "tags": [],
+  "triggerCount": 1,
+  "updatedAt": "2026-01-31T10:00:00.000Z",
+  "versionId": "1"
+}

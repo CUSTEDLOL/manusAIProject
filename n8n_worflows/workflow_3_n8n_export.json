@@ -1,0 +1,986 @@
+{
+  "name": "Matsu Matcha - Workflow 3: Inventory Query + Low Stock Alerts",
+  "nodes": [
+    {
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "field": "hours",
+              "hoursInterval": 1
+            }
+          ]
+        }
+      },
+      "id": "cron-hourly-check",
+      "name": "Hourly Low Stock Check",
+      "type": "n8n-nodes-base.cron",
+      "typeVersion": 1,
+      "position": [250, 200]
+    },
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "api/inventory_query",
+        "responseMode": "responseNode",
+        "options": {}
+      },
+      "id": "webhook-inventory-api",
+      "name": "Inventory Query API (POST /api/inventory_query)",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 1,
+      "position": [250, 400],
+      "webhookId": "matsu-inventory-api"
+    },
+    {
+      "parameters": {
+        "values": {
+          "boolean": [
+            {
+              "name": "query_mode",
+              "value": false
+            },
+            {
+              "name": "cron_mode",
+              "value": true
+            }
+          ],
+          "string": [
+            {
+              "name": "ts_now",
+              "value": "={{ new Date().toISOString() }}"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "set-cron-mode",
+      "name": "Mark as Cron Mode",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 2,
+      "position": [450, 200]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "string": [
+            {
+              "value1": "={{ $('Webhook').item.json.headers['x-internal-token'] }}",
+              "value2": "={{ $env.INTERNAL_WEBHOOK_TOKEN }}"
+            }
+          ]
+        }
+      },
+      "id": "if-auth-check",
+      "name": "Auth Check",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 1,
+      "position": [450, 400]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ {\"ok\": false, \"error\": \"UNAUTHORIZED\", \"details\": [\"Invalid or missing X-Internal-Token header\"]} }}",
+        "options": {
+          "responseCode": 401
+        }
+      },
+      "id": "respond-unauthorized",
+      "name": "Respond Unauthorized",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1,
+      "position": [650, 550]
+    },
+    {
+      "parameters": {
+        "values": {
+          "boolean": [
+            {
+              "name": "query_mode",
+              "value": true
+            }
+          ],
+          "string": [
+            {
+              "name": "product_name_filter",
+              "value": "={{ $json.body.product_name || '' }}"
+            },
+            {
+              "name": "supplier_name_filter",
+              "value": "={{ $json.body.supplier_name || '' }}"
+            },
+            {
+              "name": "requester_phone_e164",
+              "value": "={{ $json.body.requester_phone_e164 || '' }}"
+            },
+            {
+              "name": "ts_now",
+              "value": "={{ new Date().toISOString() }}"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "set-normalize-query",
+      "name": "Normalize Query Inputs",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 2,
+      "position": [650, 300]
+    },
+    {
+      "parameters": {
+        "mode": "append"
+      },
+      "id": "merge-triggers",
+      "name": "Merge Trigger Paths",
+      "type": "n8n-nodes-base.merge",
+      "typeVersion": 2,
+      "position": [850, 300]
+    },
+    {
+      "parameters": {
+        "operation": "read",
+        "documentId": "={{ $env.SHEET_ID }}",
+        "sheetName": "={{ $env.TAB_PRODUCTS }}",
+        "options": {}
+      },
+      "id": "sheets-read-products",
+      "name": "Read Products",
+      "type": "n8n-nodes-base.googleSheets",
+      "typeVersion": 4,
+      "position": [1050, 300],
+      "credentials": {
+        "googleSheetsOAuth2Api": {
+          "id": "google-sheets-oauth",
+          "name": "Google Sheets OAuth2"
+        }
+      },
+      "retryOnFail": true,
+      "maxTries": 2,
+      "waitBetweenTries": 2000
+    },
+    {
+      "parameters": {
+        "operation": "read",
+        "documentId": "={{ $env.SHEET_ID }}",
+        "sheetName": "={{ $env.TAB_INVENTORY }}",
+        "options": {}
+      },
+      "id": "sheets-read-inventory",
+      "name": "Read Inventory Lots",
+      "type": "n8n-nodes-base.googleSheets",
+      "typeVersion": 4,
+      "position": [1250, 300],
+      "credentials": {
+        "googleSheetsOAuth2Api": {
+          "id": "google-sheets-oauth",
+          "name": "Google Sheets OAuth2"
+        }
+      },
+      "retryOnFail": true,
+      "maxTries": 2,
+      "waitBetweenTries": 2000
+    },
+    {
+      "parameters": {
+        "operation": "read",
+        "documentId": "={{ $env.SHEET_ID }}",
+        "sheetName": "={{ $env.TAB_CONTRACTS }}",
+        "filters": {
+          "conditions": [
+            {
+              "column": "status",
+              "condition": "equal",
+              "value": "active"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "sheets-read-contracts",
+      "name": "Read Active Contracts",
+      "type": "n8n-nodes-base.googleSheets",
+      "typeVersion": 4,
+      "position": [1450, 300],
+      "credentials": {
+        "googleSheetsOAuth2Api": {
+          "id": "google-sheets-oauth",
+          "name": "Google Sheets OAuth2"
+        }
+      },
+      "retryOnFail": true,
+      "maxTries": 2,
+      "waitBetweenTries": 2000
+    },
+    {
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "jsCode": "// Get data from previous nodes\nconst products = $('Read Products').all().map(item => item.json);\nconst inventory = $('Read Inventory Lots').all().map(item => item.json);\nconst contracts = $('Read Active Contracts').all().map(item => item.json);\nconst triggerData = $input.item.json;\n\n// Aggregate inventory by product_id\nconst inventoryByProduct = {};\ninventory.forEach(lot => {\n  const pid = lot.product_id;\n  if (!inventoryByProduct[pid]) {\n    inventoryByProduct[pid] = {\n      total_available_kg: 0,\n      total_allocated_kg: 0,\n      lot_count: 0\n    };\n  }\n  inventoryByProduct[pid].total_available_kg += parseFloat(lot.qty_available_kg) || 0;\n  inventoryByProduct[pid].total_allocated_kg += parseFloat(lot.qty_allocated_kg) || 0;\n  inventoryByProduct[pid].lot_count += 1;\n});\n\n// Aggregate demand by product_id\nconst demandByProduct = {};\ncontracts.forEach(contract => {\n  const pid = contract.product_id;\n  if (!demandByProduct[pid]) {\n    demandByProduct[pid] = {\n      monthly_demand_kg: 0,\n      client_count: 0\n    };\n  }\n  demandByProduct[pid].monthly_demand_kg += parseFloat(contract.monthly_qty_kg) || 0;\n  demandByProduct[pid].client_count += 1;\n});\n\n// Compute days of cover for each product\nconst results = products.map(product => {\n  const pid = product.product_id;\n  const inv = inventoryByProduct[pid] || { total_available_kg: 0, total_allocated_kg: 0, lot_count: 0 };\n  const demand = demandByProduct[pid] || { monthly_demand_kg: 0, client_count: 0 };\n  \n  let days_of_cover = null;\n  let low_stock = false;\n  let reorder_qty_kg = 0;\n  \n  if (demand.monthly_demand_kg > 0) {\n    days_of_cover = (inv.total_available_kg / demand.monthly_demand_kg) * 30;\n    days_of_cover = Math.round(days_of_cover * 10) / 10;\n    \n    const threshold = parseFloat($env.LOW_STOCK_DAYS_THRESHOLD) || 14;\n    if (days_of_cover < threshold) {\n      low_stock = true;\n      reorder_qty_kg = Math.ceil((demand.monthly_demand_kg * 2) - inv.total_available_kg);\n    }\n  }\n  \n  return {\n    product_id: pid,\n    product_name: product.product_name,\n    grade: product.grade,\n    supplier_id: product.supplier_id,\n    total_available_kg: inv.total_available_kg,\n    total_allocated_kg: inv.total_allocated_kg,\n    monthly_demand_kg: demand.monthly_demand_kg,\n    days_of_cover: days_of_cover,\n    low_stock: low_stock,\n    reorder_qty_kg: reorder_qty_kg,\n    client_count: demand.client_count\n  };\n});\n\nreturn results.map(r => ({ json: { ...r, ...triggerData } }));"
+      },
+      "id": "code-compute-inventory",
+      "name": "Compute Inventory Analysis",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1650, 300]
+    },
+    {
+      "parameters": {
+        "mode": "expression",
+        "output": "={{ $json.cron_mode ? 'cron' : 'query' }}",
+        "rules": {
+          "rules": [
+            {
+              "outputKey": 0,
+              "conditions": {
+                "boolean": [
+                  {
+                    "value1": "={{ $json.cron_mode }}",
+                    "value2": true
+                  }
+                ]
+              }
+            },
+            {
+              "outputKey": 1,
+              "conditions": {
+                "boolean": [
+                  {
+                    "value1": "={{ $json.query_mode }}",
+                    "value2": true
+                  }
+                ]
+              }
+            }
+          ]
+        },
+        "fallbackOutput": 1
+      },
+      "id": "switch-route-mode",
+      "name": "Route by Mode",
+      "type": "n8n-nodes-base.switch",
+      "typeVersion": 1,
+      "position": [1850, 300]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "boolean": [
+            {
+              "value1": "={{ $json.low_stock }}",
+              "value2": true
+            }
+          ]
+        }
+      },
+      "id": "if-low-stock",
+      "name": "Is Low Stock?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 1,
+      "position": [2050, 200]
+    },
+    {
+      "parameters": {
+        "values": {
+          "string": [
+            {
+              "name": "dedupe_key",
+              "value": "=lowstock:{{ $json.product_id }}:{{ new Date().toISOString().split('T')[0] }}"
+            },
+            {
+              "name": "today_date",
+              "value": "={{ new Date().toISOString().split('T')[0] }}"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "set-dedupe-key",
+      "name": "Prepare Dedupe Key",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 2,
+      "position": [2250, 100]
+    },
+    {
+      "parameters": {
+        "operation": "read",
+        "documentId": "={{ $env.SHEET_ID }}",
+        "sheetName": "={{ $env.TAB_ALERTS }}",
+        "filters": {
+          "conditions": [
+            {
+              "column": "dedupe_key",
+              "condition": "equal",
+              "value": "={{ $json.dedupe_key }}"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "sheets-alerts-dedupe",
+      "name": "Alerts - Check Dedupe",
+      "type": "n8n-nodes-base.googleSheets",
+      "typeVersion": 4,
+      "position": [2450, 100],
+      "credentials": {
+        "googleSheetsOAuth2Api": {
+          "id": "google-sheets-oauth",
+          "name": "Google Sheets OAuth2"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "number": [
+            {
+              "value1": "={{ $json.length || 0 }}",
+              "operation": "larger",
+              "value2": 0
+            }
+          ]
+        }
+      },
+      "id": "if-alert-exists",
+      "name": "Alert Already Sent?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 1,
+      "position": [2650, 100]
+    },
+    {
+      "parameters": {
+        "values": {
+          "string": [
+            {
+              "name": "alert_id",
+              "value": "={{ $now.format('uuid') }}"
+            },
+            {
+              "name": "alert_type",
+              "value": "LOW_STOCK"
+            },
+            {
+              "name": "severity",
+              "value": "High"
+            },
+            {
+              "name": "entity_type",
+              "value": "product"
+            },
+            {
+              "name": "entity_id",
+              "value": "={{ $json.product_id }}"
+            },
+            {
+              "name": "alert_message",
+              "value": "=Low stock: {{ $json.product_name }} ({{ $json.grade }}). Available: {{ $json.total_available_kg }} kg. Days of cover: {{ $json.days_of_cover }}. Reorder: {{ $json.reorder_qty_kg }} kg."
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "set-alert-message",
+      "name": "Prepare Alert Message",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 2,
+      "position": [2850, 50]
+    },
+    {
+      "parameters": {
+        "operation": "append",
+        "documentId": "={{ $env.SHEET_ID }}",
+        "sheetName": "={{ $env.TAB_ALERTS }}",
+        "columns": {
+          "mappings": [
+            {
+              "column": "alert_id",
+              "value": "={{ $json.alert_id }}"
+            },
+            {
+              "column": "type",
+              "value": "={{ $json.alert_type }}"
+            },
+            {
+              "column": "severity",
+              "value": "={{ $json.severity }}"
+            },
+            {
+              "column": "entity_type",
+              "value": "={{ $json.entity_type }}"
+            },
+            {
+              "column": "entity_id",
+              "value": "={{ $json.entity_id }}"
+            },
+            {
+              "column": "message",
+              "value": "={{ $json.alert_message }}"
+            },
+            {
+              "column": "created_at",
+              "value": "={{ $json.ts_now }}"
+            },
+            {
+              "column": "resolved",
+              "value": "false"
+            },
+            {
+              "column": "dedupe_key",
+              "value": "={{ $json.dedupe_key }}"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "sheets-alerts-insert",
+      "name": "Alerts - Insert",
+      "type": "n8n-nodes-base.googleSheets",
+      "typeVersion": 4,
+      "position": [3050, 50],
+      "credentials": {
+        "googleSheetsOAuth2Api": {
+          "id": "google-sheets-oauth",
+          "name": "Google Sheets OAuth2"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $env.WHATSAPP_API_BASE }}/{{ $env.WHATSAPP_PHONE_NUMBER_ID }}/messages",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "bodyParameters": {
+          "parameters": [
+            {
+              "name": "messaging_product",
+              "value": "whatsapp"
+            },
+            {
+              "name": "to",
+              "value": "={{ $env.OWNER_PHONE_E164 }}"
+            },
+            {
+              "name": "type",
+              "value": "text"
+            },
+            {
+              "name": "text",
+              "value": "={{ {\"body\": \"🚨 [MatsuOps Alert] \" + $json.alert_message} }}"
+            }
+          ]
+        },
+        "options": {
+          "timeout": 10000
+        }
+      },
+      "id": "http-wa-alert-owner",
+      "name": "WhatsApp Alert Owner",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4,
+      "position": [3250, 50],
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "whatsapp-api-auth",
+          "name": "WhatsApp API Auth"
+        }
+      },
+      "retryOnFail": true,
+      "maxTries": 2,
+      "waitBetweenTries": 2000
+    },
+    {
+      "parameters": {
+        "sendTo": "={{ $env.OWNER_EMAIL }}",
+        "subject": "=[MatsuOps] Low Stock Alert: {{ $json.product_name }}",
+        "message": "=Timestamp: {{ $json.ts_now }}\nWorkflow: Workflow 3 - Inventory Monitoring\nAlert Type: LOW_STOCK\nSeverity: High\n\nProduct: {{ $json.product_name }} ({{ $json.grade }})\nProduct ID: {{ $json.product_id }}\nSupplier ID: {{ $json.supplier_id }}\n\nInventory Status:\n- Available: {{ $json.total_available_kg }} kg\n- Allocated: {{ $json.total_allocated_kg }} kg\n- Monthly Demand: {{ $json.monthly_demand_kg }} kg\n- Days of Cover: {{ $json.days_of_cover }} days\n- Active Clients: {{ $json.client_count }}\n\nRecommendation:\nReorder {{ $json.reorder_qty_kg }} kg to maintain 2-month buffer.\n\nAction Required: Contact supplier and place order.",
+        "options": {}
+      },
+      "id": "gmail-alert-owner",
+      "name": "Email Alert Owner",
+      "type": "n8n-nodes-base.gmail",
+      "typeVersion": 2,
+      "position": [3450, 50],
+      "credentials": {
+        "gmailOAuth2": {
+          "id": "gmail-oauth",
+          "name": "Gmail OAuth2"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "operation": "append",
+        "documentId": "={{ $env.SHEET_ID }}",
+        "sheetName": "={{ $env.TAB_MESSAGES }}",
+        "columns": {
+          "mappings": [
+            {
+              "column": "msg_id",
+              "value": "={{ $now.format('uuid') }}"
+            },
+            {
+              "column": "channel",
+              "value": "whatsapp"
+            },
+            {
+              "column": "direction",
+              "value": "outbound"
+            },
+            {
+              "column": "from_id",
+              "value": "system"
+            },
+            {
+              "column": "to_id",
+              "value": "={{ $env.OWNER_PHONE_E164 }}"
+            },
+            {
+              "column": "intent",
+              "value": "LOW_STOCK_ALERT"
+            },
+            {
+              "column": "body",
+              "value": "={{ $json.alert_message }}"
+            },
+            {
+              "column": "outcome",
+              "value": "SENT"
+            },
+            {
+              "column": "ts",
+              "value": "={{ $json.ts_now }}"
+            },
+            {
+              "column": "dedupe_key",
+              "value": "={{ $json.dedupe_key }}"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "sheets-messages-insert",
+      "name": "Messages_Log - Insert Alert",
+      "type": "n8n-nodes-base.googleSheets",
+      "typeVersion": 4,
+      "position": [3650, 50],
+      "credentials": {
+        "googleSheetsOAuth2Api": {
+          "id": "google-sheets-oauth",
+          "name": "Google Sheets OAuth2"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "jsCode": "const items = $input.all();\nconst firstItem = items[0].json;\nconst product_name_filter = firstItem.product_name_filter || '';\nconst supplier_name_filter = firstItem.supplier_name_filter || '';\n\n// Filter by product name if provided\nlet filtered = items;\nif (product_name_filter && product_name_filter.trim() !== '') {\n  filtered = filtered.filter(item => \n    item.json.product_name.toLowerCase().includes(product_name_filter.toLowerCase())\n  );\n}\n\n// Filter by supplier if provided\nif (supplier_name_filter && supplier_name_filter.trim() !== '') {\n  filtered = filtered.filter(item => \n    item.json.supplier_id && item.json.supplier_id.toLowerCase().includes(supplier_name_filter.toLowerCase())\n  );\n}\n\n// Sort by days of cover (ascending, null last)\nfiltered.sort((a, b) => {\n  if (a.json.days_of_cover === null) return 1;\n  if (b.json.days_of_cover === null) return -1;\n  return a.json.days_of_cover - b.json.days_of_cover;\n});\n\n// If no filter, return top 5 lowest days of cover\nif (!product_name_filter && !supplier_name_filter) {\n  filtered = filtered.slice(0, 5);\n}\n\nreturn filtered;"
+      },
+      "id": "code-filter-results",
+      "name": "Filter and Sort Results",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [2050, 400]
+    },
+    {
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "jsCode": "const items = $input.all();\nconst firstItem = items[0].json;\n\nconst data = items.map(item => ({\n  product_name: item.json.product_name,\n  grade: item.json.grade,\n  available_kg: item.json.total_available_kg,\n  allocated_kg: item.json.total_allocated_kg,\n  monthly_demand_kg: item.json.monthly_demand_kg,\n  days_of_cover: item.json.days_of_cover,\n  low_stock: item.json.low_stock,\n  reorder_qty_kg: item.json.reorder_qty_kg\n}));\n\nconst low_stock_count = data.filter(d => d.low_stock).length;\n\nreturn [{\n  json: {\n    data: data,\n    summary: {\n      total_products: data.length,\n      low_stock_count: low_stock_count\n    },\n    requester_phone_e164: firstItem.requester_phone_e164\n  }\n}];"
+      },
+      "id": "code-aggregate-query",
+      "name": "Aggregate Query Results",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [2250, 400]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $env.LLM_API_URL }}",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "bodyParameters": {
+          "parameters": [
+            {
+              "name": "model",
+              "value": "gpt-4.1-mini"
+            },
+            {
+              "name": "temperature",
+              "value": "0.2"
+            },
+            {
+              "name": "messages",
+              "value": "={{ [{\"role\": \"system\", \"content\": \"You are a B2B operations assistant for Matsu Matcha. Write a concise WhatsApp reply (max 4 lines) summarizing inventory status. Highlight low stock items. Respond ONLY with valid JSON: {\\\"reply_text\\\": \\\"...\\\"}\"}, {\"role\": \"user\", \"content\": \"Inventory Summary:\\nTotal Products: \" + $json.summary.total_products + \"\\nLow Stock Items: \" + $json.summary.low_stock_count + \"\\n\\nDetails:\\n\" + $json.data.map(d => d.product_name + \": \" + d.available_kg + \" kg available (\" + (d.days_of_cover ? d.days_of_cover + \" days\" : \"no demand\") + \")\").join(\"\\n\")}] }}"
+            }
+          ]
+        },
+        "options": {
+          "timeout": 15000
+        }
+      },
+      "id": "http-ai-inventory-reply",
+      "name": "AI - Inventory Reply Writer",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4,
+      "position": [2450, 400],
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "llm-api-auth",
+          "name": "LLM API Auth"
+        }
+      },
+      "retryOnFail": true,
+      "maxTries": 1,
+      "waitBetweenTries": 1000
+    },
+    {
+      "parameters": {
+        "mode": "runOnceForEachItem",
+        "jsCode": "try {\n  const aiContent = $input.item.json.choices?.[0]?.message?.content;\n  if (!aiContent) {\n    throw new Error('No AI response');\n  }\n  \n  const parsed = JSON.parse(aiContent);\n  \n  return {\n    json: {\n      reply_text: parsed.reply_text,\n      ai_valid: true\n    }\n  };\n} catch (error) {\n  // Fallback\n  const prevData = $input.all()[0].json;\n  const lowStockItems = prevData.data.filter(d => d.low_stock);\n  let fallback = `Inventory: ${prevData.summary.total_products} products checked.`;\n  if (lowStockItems.length > 0) {\n    fallback += ` ⚠️ ${lowStockItems.length} low stock: ${lowStockItems.map(d => d.product_name).join(', ')}.`;\n  } else {\n    fallback += ` All stock levels OK.`;\n  }\n  \n  return {\n    json: {\n      reply_text: fallback,\n      ai_valid: false\n    }\n  };\n}"
+      },
+      "id": "code-parse-ai-reply",
+      "name": "Parse AI Reply",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [2650, 400]
+    },
+    {
+      "parameters": {
+        "mode": "mergeByPosition"
+      },
+      "id": "merge-query-reply",
+      "name": "Merge Query Reply with Data",
+      "type": "n8n-nodes-base.merge",
+      "typeVersion": 2,
+      "position": [2850, 400]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ {\"ok\": true, \"data\": $json.data, \"summary\": $json.summary, \"reply_text\": $json.reply_text} }}",
+        "options": {
+          "responseCode": 200
+        }
+      },
+      "id": "respond-query-success",
+      "name": "Respond Query Success",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1,
+      "position": [3050, 400]
+    }
+  ],
+  "connections": {
+    "Hourly Low Stock Check": {
+      "main": [
+        [
+          {
+            "node": "Mark as Cron Mode",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Inventory Query API (POST /api/inventory_query)": {
+      "main": [
+        [
+          {
+            "node": "Auth Check",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Mark as Cron Mode": {
+      "main": [
+        [
+          {
+            "node": "Merge Trigger Paths",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Auth Check": {
+      "main": [
+        [
+          {
+            "node": "Normalize Query Inputs",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Respond Unauthorized",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Normalize Query Inputs": {
+      "main": [
+        [
+          {
+            "node": "Merge Trigger Paths",
+            "type": "main",
+            "index": 1
+          }
+        ]
+      ]
+    },
+    "Merge Trigger Paths": {
+      "main": [
+        [
+          {
+            "node": "Read Products",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Read Products": {
+      "main": [
+        [
+          {
+            "node": "Read Inventory Lots",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Read Inventory Lots": {
+      "main": [
+        [
+          {
+            "node": "Read Active Contracts",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Read Active Contracts": {
+      "main": [
+        [
+          {
+            "node": "Compute Inventory Analysis",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Compute Inventory Analysis": {
+      "main": [
+        [
+          {
+            "node": "Route by Mode",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Route by Mode": {
+      "main": [
+        [
+          {
+            "node": "Is Low Stock?",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Filter and Sort Results",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Is Low Stock?": {
+      "main": [
+        [
+          {
+            "node": "Prepare Dedupe Key",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Prepare Dedupe Key": {
+      "main": [
+        [
+          {
+            "node": "Alerts - Check Dedupe",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Alerts - Check Dedupe": {
+      "main": [
+        [
+          {
+            "node": "Alert Already Sent?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Alert Already Sent?": {
+      "main": [
+        [],
+        [
+          {
+            "node": "Prepare Alert Message",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Prepare Alert Message": {
+      "main": [
+        [
+          {
+            "node": "Alerts - Insert",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Alerts - Insert": {
+      "main": [
+        [
+          {
+            "node": "WhatsApp Alert Owner",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "WhatsApp Alert Owner": {
+      "main": [
+        [
+          {
+            "node": "Email Alert Owner",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Email Alert Owner": {
+      "main": [
+        [
+          {
+            "node": "Messages_Log - Insert Alert",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Filter and Sort Results": {
+      "main": [
+        [
+          {
+            "node": "Aggregate Query Results",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Aggregate Query Results": {
+      "main": [
+        [
+          {
+            "node": "AI - Inventory Reply Writer",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Merge Query Reply with Data",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "AI - Inventory Reply Writer": {
+      "main": [
+        [
+          {
+            "node": "Parse AI Reply",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Parse AI Reply": {
+      "main": [
+        [
+          {
+            "node": "Merge Query Reply with Data",
+            "type": "main",
+            "index": 1
+          }
+        ]
+      ]
+    },
+    "Merge Query Reply with Data": {
+      "main": [
+        [
+          {
+            "node": "Respond Query Success",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "staticData": null,
+  "tags": [],
+  "triggerCount": 2,
+  "updatedAt": "2026-01-31T10:00:00.000Z",
+  "versionId": "1"
+}

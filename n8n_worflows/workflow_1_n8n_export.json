@@ -1,0 +1,1152 @@
+{
+  "name": "Matsu Matcha - Workflow 1: WhatsApp AI Router",
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "wa/inbound",
+        "responseMode": "responseNode",
+        "options": {}
+      },
+      "id": "webhook-wa-inbound",
+      "name": "WA Inbound (POST /wa/inbound)",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 1,
+      "position": [250, 300],
+      "webhookId": "matsu-wa-inbound"
+    },
+    {
+      "parameters": {
+        "values": {
+          "string": [
+            {
+              "name": "wa_message_id",
+              "value": "={{ $json.entry?.[0]?.changes?.[0]?.value?.messages?.[0]?.id }}"
+            },
+            {
+              "name": "phone_e164",
+              "value": "={{ $json.entry?.[0]?.changes?.[0]?.value?.messages?.[0]?.from }}"
+            },
+            {
+              "name": "message_text",
+              "value": "={{ $json.entry?.[0]?.changes?.[0]?.value?.messages?.[0]?.text?.body || ($json.entry?.[0]?.changes?.[0]?.value?.messages?.[0]?.type === 'audio' || $json.entry?.[0]?.changes?.[0]?.value?.messages?.[0]?.type === 'voice' ? '[VOICE_MESSAGE]' : '') }}"
+            },
+            {
+              "name": "ts_now",
+              "value": "={{ new Date().toISOString() }}"
+            },
+            {
+              "name": "dedupe_key",
+              "value": "=wa:{{ $json.entry?.[0]?.changes?.[0]?.value?.messages?.[0]?.id }}"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "set-normalize-payload",
+      "name": "Normalize WA Payload",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 2,
+      "position": [450, 300]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "string": [
+            {
+              "value1": "={{ $json.wa_message_id }}",
+              "operation": "isNotEmpty"
+            },
+            {
+              "value1": "={{ $json.phone_e164 }}",
+              "operation": "isNotEmpty"
+            },
+            {
+              "value1": "={{ $json.message_text }}",
+              "operation": "isNotEmpty"
+            }
+          ]
+        },
+        "combineOperation": "all"
+      },
+      "id": "if-validate-fields",
+      "name": "Validate Required Fields",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 1,
+      "position": [650, 300]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ {\"ok\": false, \"error\": \"VALIDATION_ERROR\", \"details\": [\"missing_phone_or_message_id\"]} }}",
+        "options": {
+          "responseCode": 400
+        }
+      },
+      "id": "respond-validation-error",
+      "name": "Respond Validation Error",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1,
+      "position": [850, 450]
+    },
+    {
+      "parameters": {
+        "operation": "read",
+        "documentId": "={{ $env.SHEET_ID }}",
+        "sheetName": "={{ $env.TAB_MESSAGES }}",
+        "filters": {
+          "conditions": [
+            {
+              "column": "dedupe_key",
+              "condition": "equal",
+              "value": "={{ $json.dedupe_key }}"
+            },
+            {
+              "column": "direction",
+              "condition": "equal",
+              "value": "inbound"
+            }
+          ],
+          "combineConditions": "AND"
+        },
+        "options": {}
+      },
+      "id": "sheets-lookup-dedupe",
+      "name": "Messages_Log - Lookup Dedupe",
+      "type": "n8n-nodes-base.googleSheets",
+      "typeVersion": 4,
+      "position": [850, 200],
+      "credentials": {
+        "googleSheetsOAuth2Api": {
+          "id": "google-sheets-oauth",
+          "name": "Google Sheets OAuth2"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "number": [
+            {
+              "value1": "={{ $json.length || 0 }}",
+              "operation": "larger",
+              "value2": 0
+            }
+          ]
+        }
+      },
+      "id": "if-is-duplicate",
+      "name": "Is Duplicate?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 1,
+      "position": [1050, 200]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ {\"ok\": true, \"deduped\": true} }}",
+        "options": {
+          "responseCode": 200
+        }
+      },
+      "id": "respond-deduped",
+      "name": "Respond Deduped",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1,
+      "position": [1250, 100]
+    },
+    {
+      "parameters": {
+        "operation": "append",
+        "documentId": "={{ $env.SHEET_ID }}",
+        "sheetName": "={{ $env.TAB_MESSAGES }}",
+        "columns": {
+          "mappings": [
+            {
+              "column": "msg_id",
+              "value": "={{ $now.format('uuid') }}"
+            },
+            {
+              "column": "channel",
+              "value": "whatsapp"
+            },
+            {
+              "column": "direction",
+              "value": "inbound"
+            },
+            {
+              "column": "from_id",
+              "value": "={{ $json.phone_e164 }}"
+            },
+            {
+              "column": "to_id",
+              "value": "={{ $env.OWNER_PHONE_E164 }}"
+            },
+            {
+              "column": "intent",
+              "value": "PENDING"
+            },
+            {
+              "column": "body",
+              "value": "={{ $json.message_text }}"
+            },
+            {
+              "column": "outcome",
+              "value": "PROCESSING"
+            },
+            {
+              "column": "ts",
+              "value": "={{ $json.ts_now }}"
+            },
+            {
+              "column": "dedupe_key",
+              "value": "={{ $json.dedupe_key }}"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "sheets-insert-inbound",
+      "name": "Messages_Log - Insert Inbound",
+      "type": "n8n-nodes-base.googleSheets",
+      "typeVersion": 4,
+      "position": [1250, 300],
+      "credentials": {
+        "googleSheetsOAuth2Api": {
+          "id": "google-sheets-oauth",
+          "name": "Google Sheets OAuth2"
+        }
+      },
+      "retryOnFail": true,
+      "maxTries": 2,
+      "waitBetweenTries": 2000
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $env.LLM_API_URL }}",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "bodyParameters": {
+          "parameters": [
+            {
+              "name": "model",
+              "value": "gpt-4.1-mini"
+            },
+            {
+              "name": "temperature",
+              "value": "0.2"
+            },
+            {
+              "name": "messages",
+              "value": "={{ [{\"role\": \"system\", \"content\": \"You are a B2B operations assistant for Matsu Matcha. Extract intent and entities from user messages. Respond ONLY with valid JSON matching this exact schema:\\n{\\n  \\\"intent\\\": \\\"PROFIT_QUERY|INVENTORY_QUERY|REORDER_QUERY|SUPPLIER_SWAP_QUERY|HELP\\\",\\n  \\\"entities\\\": {\\n    \\\"client_name\\\": \\\"\\\",\\n    \\\"product_name\\\": \\\"\\\",\\n    \\\"supplier_name\\\": \\\"\\\",\\n    \\\"time_period\\\": \\\"\\\"\\n  }\\n}\\nUse empty strings for unknown entity values. Intent classification rules:\\n- PROFIT_QUERY: profit, revenue, margin, earnings for a client\\n- INVENTORY_QUERY: stock levels, availability, warehouse for a product\\n- REORDER_QUERY: low stock, reorder, running out\\n- SUPPLIER_SWAP_QUERY: swap supplier, better supplier, alternative supplier\\n- HELP: help, commands, what can you do\"}, {\"role\": \"user\", \"content\": $json.message_text}] }}"
+            }
+          ]
+        },
+        "options": {
+          "timeout": 15000
+        }
+      },
+      "id": "http-ai-intent",
+      "name": "AI - Intent + Entities",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4,
+      "position": [1450, 300],
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "llm-api-auth",
+          "name": "LLM API Auth"
+        }
+      },
+      "retryOnFail": true,
+      "maxTries": 1,
+      "waitBetweenTries": 1000
+    },
+    {
+      "parameters": {
+        "mode": "runOnceForEachItem",
+        "jsCode": "try {\n  const aiContent = $input.item.json.choices?.[0]?.message?.content;\n  if (!aiContent) {\n    return {\n      json: {\n        ai_valid: false,\n        error_message: 'No AI response content',\n        raw_ai_response: 'NO_RESPONSE',\n        phone_e164: $input.item.json.phone_e164,\n        message_text: $input.item.json.message_text,\n        wa_message_id: $input.item.json.wa_message_id,\n        ts_now: $input.item.json.ts_now\n      }\n    };\n  }\n  \n  const parsed = JSON.parse(aiContent);\n  \n  if (!parsed.intent || !parsed.entities) {\n    throw new Error('Missing required fields in AI response');\n  }\n  \n  return {\n    json: {\n      ai_valid: true,\n      intent: parsed.intent,\n      entities: parsed.entities,\n      raw_ai_response: aiContent,\n      phone_e164: $input.item.json.phone_e164,\n      message_text: $input.item.json.message_text,\n      wa_message_id: $input.item.json.wa_message_id,\n      ts_now: $input.item.json.ts_now\n    }\n  };\n} catch (error) {\n  return {\n    json: {\n      ai_valid: false,\n      error_message: error.message,\n      raw_ai_response: $input.item.json.choices?.[0]?.message?.content || 'NO_RESPONSE',\n      phone_e164: $input.item.json.phone_e164,\n      message_text: $input.item.json.message_text,\n      wa_message_id: $input.item.json.wa_message_id,\n      ts_now: $input.item.json.ts_now\n    }\n  };\n}"
+      },
+      "id": "code-parse-ai",
+      "name": "Parse AI Response",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1650, 300]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "boolean": [
+            {
+              "value1": "={{ $json.ai_valid }}",
+              "value2": true
+            }
+          ]
+        }
+      },
+      "id": "if-ai-valid",
+      "name": "AI JSON Valid?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 1,
+      "position": [1850, 300]
+    },
+    {
+      "parameters": {
+        "values": {
+          "string": [
+            {
+              "name": "alert_type",
+              "value": "AI_PARSE_FAILURE"
+            },
+            {
+              "name": "alert_message",
+              "value": "=AI returned non-JSON response for message from {{ $json.phone_e164 }}: {{ $json.raw_ai_response }}"
+            },
+            {
+              "name": "severity",
+              "value": "HIGH"
+            },
+            {
+              "name": "timestamp",
+              "value": "={{ $json.ts_now }}"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "set-alert-ai-failure",
+      "name": "Prepare Owner Alert - AI Failure",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 2,
+      "position": [2050, 450]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $env.WHATSAPP_API_BASE }}/{{ $env.WHATSAPP_PHONE_NUMBER_ID }}/messages",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "bodyParameters": {
+          "parameters": [
+            {
+              "name": "messaging_product",
+              "value": "whatsapp"
+            },
+            {
+              "name": "to",
+              "value": "={{ $env.OWNER_PHONE_E164 }}"
+            },
+            {
+              "name": "type",
+              "value": "text"
+            },
+            {
+              "name": "text",
+              "value": "={{ {\"body\": \"[MatsuOps Alert] AI Parse Failure\\n\" + $json.alert_message} }}"
+            }
+          ]
+        },
+        "options": {
+          "timeout": 10000
+        }
+      },
+      "id": "http-wa-alert-owner-ai",
+      "name": "WhatsApp Alert Owner - AI Failure",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4,
+      "position": [2250, 450],
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "whatsapp-api-auth",
+          "name": "WhatsApp API Auth"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "sendTo": "={{ $env.OWNER_EMAIL }}",
+        "subject": "[MatsuOps] AI Parse Failure",
+        "message": "=Timestamp: {{ $json.timestamp }}\nWorkflow: Workflow 1 - WhatsApp AI Router\nError: AI returned non-JSON response\nUser Phone: {{ $json.phone_e164 }}\nUser Message: {{ $json.message_text }}\nAI Raw Response: {{ $json.raw_ai_response }}\n\nAction Required: Check LLM API configuration and prompt.",
+        "options": {}
+      },
+      "id": "gmail-alert-owner-ai",
+      "name": "Email Alert Owner - AI Failure",
+      "type": "n8n-nodes-base.gmail",
+      "typeVersion": 2,
+      "position": [2250, 600],
+      "credentials": {
+        "gmailOAuth2": {
+          "id": "gmail-oauth",
+          "name": "Gmail OAuth2"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "values": {
+          "string": [
+            {
+              "name": "reply_text",
+              "value": "I couldn't parse that. Try:\n• \"profit Cafe Zen\"\n• \"low stock\"\n• \"inventory premium matcha\"\n• \"swap supplier for Cafe Zen\"\n• \"help\""
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "set-fallback-reply",
+      "name": "Prepare Fallback Reply",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 2,
+      "position": [2450, 450]
+    },
+    {
+      "parameters": {
+        "mode": "expression",
+        "output": "{{ $json.intent }}",
+        "rules": {
+          "rules": [
+            {
+              "outputKey": 0,
+              "conditions": {
+                "string": [
+                  {
+                    "value1": "={{ $json.intent }}",
+                    "value2": "HELP"
+                  }
+                ]
+              }
+            },
+            {
+              "outputKey": 1,
+              "conditions": {
+                "string": [
+                  {
+                    "value1": "={{ $json.intent }}",
+                    "value2": "PROFIT_QUERY"
+                  }
+                ]
+              }
+            },
+            {
+              "outputKey": 2,
+              "conditions": {
+                "string": [
+                  {
+                    "value1": "={{ $json.intent }}",
+                    "operation": "regex",
+                    "value2": "INVENTORY_QUERY|REORDER_QUERY"
+                  }
+                ]
+              }
+            },
+            {
+              "outputKey": 3,
+              "conditions": {
+                "string": [
+                  {
+                    "value1": "={{ $json.intent }}",
+                    "value2": "SUPPLIER_SWAP_QUERY"
+                  }
+                ]
+              }
+            }
+          ]
+        },
+        "fallbackOutput": 4
+      },
+      "id": "switch-route-intent",
+      "name": "Route by Intent",
+      "type": "n8n-nodes-base.switch",
+      "typeVersion": 1,
+      "position": [2050, 200]
+    },
+    {
+      "parameters": {
+        "values": {
+          "string": [
+            {
+              "name": "reply_text",
+              "value": "Matsu Matcha B2B Dashboard Commands:\n\n📊 Profit Analysis:\n• \"profit Cafe Zen\"\n• \"profit Cafe Zen this month\"\n\n📦 Inventory:\n• \"inventory premium matcha\"\n• \"low stock\"\n\n🔄 Supplier Optimization:\n• \"swap supplier for Cafe Zen\"\n\nType your question naturally or use examples above."
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "set-help-reply",
+      "name": "Prepare Help Reply",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 2,
+      "position": [2250, 50]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $env.N8N_WEBHOOK_BASE_URL }}/api/profit",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "X-Internal-Token",
+              "value": "={{ $env.INTERNAL_WEBHOOK_TOKEN }}"
+            },
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "bodyParameters": {
+          "parameters": [
+            {
+              "name": "client_name",
+              "value": "={{ $json.entities.client_name }}"
+            },
+            {
+              "name": "product_name",
+              "value": "={{ $json.entities.product_name }}"
+            },
+            {
+              "name": "time_period",
+              "value": "={{ $json.entities.time_period }}"
+            },
+            {
+              "name": "requester_phone_e164",
+              "value": "={{ $json.phone_e164 }}"
+            }
+          ]
+        },
+        "options": {
+          "timeout": 20000
+        }
+      },
+      "id": "http-call-profit-api",
+      "name": "Call Profit API",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4,
+      "position": [2250, 150],
+      "retryOnFail": true,
+      "maxTries": 1,
+      "waitBetweenTries": 2000
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $env.N8N_WEBHOOK_BASE_URL }}/api/inventory_query",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "X-Internal-Token",
+              "value": "={{ $env.INTERNAL_WEBHOOK_TOKEN }}"
+            },
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "bodyParameters": {
+          "parameters": [
+            {
+              "name": "product_name",
+              "value": "={{ $json.entities.product_name }}"
+            },
+            {
+              "name": "supplier_name",
+              "value": "={{ $json.entities.supplier_name }}"
+            },
+            {
+              "name": "requester_phone_e164",
+              "value": "={{ $json.phone_e164 }}"
+            }
+          ]
+        },
+        "options": {
+          "timeout": 20000
+        }
+      },
+      "id": "http-call-inventory-api",
+      "name": "Call Inventory API",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4,
+      "position": [2250, 250],
+      "retryOnFail": true,
+      "maxTries": 1,
+      "waitBetweenTries": 2000
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $env.N8N_WEBHOOK_BASE_URL }}/api/swap",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "X-Internal-Token",
+              "value": "={{ $env.INTERNAL_WEBHOOK_TOKEN }}"
+            },
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "bodyParameters": {
+          "parameters": [
+            {
+              "name": "client_name",
+              "value": "={{ $json.entities.client_name }}"
+            },
+            {
+              "name": "product_name",
+              "value": "={{ $json.entities.product_name }}"
+            },
+            {
+              "name": "requester_phone_e164",
+              "value": "={{ $json.phone_e164 }}"
+            }
+          ]
+        },
+        "options": {
+          "timeout": 25000
+        }
+      },
+      "id": "http-call-swap-api",
+      "name": "Call Swap API",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4,
+      "position": [2250, 350],
+      "retryOnFail": true,
+      "maxTries": 1,
+      "waitBetweenTries": 2000
+    },
+    {
+      "parameters": {
+        "mode": "append"
+      },
+      "id": "merge-all-replies",
+      "name": "Merge All Reply Paths",
+      "type": "n8n-nodes-base.merge",
+      "typeVersion": 2,
+      "position": [2650, 300]
+    },
+    {
+      "parameters": {
+        "mode": "runOnceForEachItem",
+        "jsCode": "let replyText = '';\n\nif ($input.item.json.reply_text) {\n  replyText = $input.item.json.reply_text;\n} else if ($input.item.json.ok && $input.item.json.reply_text) {\n  replyText = $input.item.json.reply_text;\n} else if ($input.item.json.error) {\n  replyText = `Error: ${$input.item.json.error}. ${$input.item.json.details ? $input.item.json.details.join(', ') : 'Please try again.'}`;\n} else {\n  replyText = 'Something went wrong. Please try again.';\n}\n\nif (!replyText || replyText.trim() === '') {\n  replyText = 'No response available. Please try again.';\n}\n\nreturn {\n  json: {\n    reply_text: replyText,\n    phone_e164: $input.item.json.phone_e164 || $input.item.json.requester_phone_e164,\n    wa_message_id: $input.item.json.wa_message_id,\n    intent: $input.item.json.intent || 'UNKNOWN'\n  }\n};"
+      },
+      "id": "code-extract-reply",
+      "name": "Extract Reply Text",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [2850, 300]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $env.WHATSAPP_API_BASE }}/{{ $env.WHATSAPP_PHONE_NUMBER_ID }}/messages",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "bodyParameters": {
+          "parameters": [
+            {
+              "name": "messaging_product",
+              "value": "whatsapp"
+            },
+            {
+              "name": "to",
+              "value": "={{ $json.phone_e164 }}"
+            },
+            {
+              "name": "type",
+              "value": "text"
+            },
+            {
+              "name": "text",
+              "value": "={{ {\"body\": $json.reply_text} }}"
+            }
+          ]
+        },
+        "options": {
+          "timeout": 10000
+        }
+      },
+      "id": "http-wa-send-message",
+      "name": "WhatsApp Send Message",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4,
+      "position": [3050, 300],
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "whatsapp-api-auth",
+          "name": "WhatsApp API Auth"
+        }
+      },
+      "retryOnFail": true,
+      "maxTries": 2,
+      "waitBetweenTries": 2000,
+      "onError": "continueErrorOutput"
+    },
+    {
+      "parameters": {
+        "sendTo": "={{ $env.OWNER_EMAIL }}",
+        "subject": "[MatsuOps] WhatsApp Send Failure",
+        "message": "=Timestamp: {{ new Date().toISOString() }}\nWorkflow: Workflow 1 - WhatsApp AI Router\nError: Failed to send WhatsApp message\nUser Phone: {{ $json.phone_e164 }}\nMessage Text: {{ $json.reply_text }}\n\nAction Required: Check WhatsApp API configuration and token.",
+        "options": {}
+      },
+      "id": "gmail-alert-wa-failure",
+      "name": "Alert Owner - WhatsApp Send Failure",
+      "type": "n8n-nodes-base.gmail",
+      "typeVersion": 2,
+      "position": [3250, 450],
+      "credentials": {
+        "gmailOAuth2": {
+          "id": "gmail-oauth",
+          "name": "Gmail OAuth2"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "operation": "append",
+        "documentId": "={{ $env.SHEET_ID }}",
+        "sheetName": "={{ $env.TAB_MESSAGES }}",
+        "columns": {
+          "mappings": [
+            {
+              "column": "msg_id",
+              "value": "={{ $now.format('uuid') }}"
+            },
+            {
+              "column": "channel",
+              "value": "whatsapp"
+            },
+            {
+              "column": "direction",
+              "value": "outbound"
+            },
+            {
+              "column": "from_id",
+              "value": "={{ $env.OWNER_PHONE_E164 }}"
+            },
+            {
+              "column": "to_id",
+              "value": "={{ $json.phone_e164 }}"
+            },
+            {
+              "column": "intent",
+              "value": "={{ $json.intent }}"
+            },
+            {
+              "column": "body",
+              "value": "={{ $json.reply_text }}"
+            },
+            {
+              "column": "outcome",
+              "value": "SENT"
+            },
+            {
+              "column": "ts",
+              "value": "={{ new Date().toISOString() }}"
+            },
+            {
+              "column": "dedupe_key",
+              "value": "=wa_reply:{{ $json.wa_message_id }}"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "sheets-insert-outbound",
+      "name": "Messages_Log - Insert Outbound",
+      "type": "n8n-nodes-base.googleSheets",
+      "typeVersion": 4,
+      "position": [3250, 300],
+      "credentials": {
+        "googleSheetsOAuth2Api": {
+          "id": "google-sheets-oauth",
+          "name": "Google Sheets OAuth2"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ {\"ok\": true, \"intent\": $json.intent, \"entities\": $json.entities || {}, \"reply_sent\": true} }}",
+        "options": {
+          "responseCode": 200
+        }
+      },
+      "id": "respond-success",
+      "name": "Respond Success",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1,
+      "position": [3450, 300]
+    }
+  ],
+  "connections": {
+    "WA Inbound (POST /wa/inbound)": {
+      "main": [
+        [
+          {
+            "node": "Normalize WA Payload",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Normalize WA Payload": {
+      "main": [
+        [
+          {
+            "node": "Validate Required Fields",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Validate Required Fields": {
+      "main": [
+        [
+          {
+            "node": "Messages_Log - Lookup Dedupe",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Respond Validation Error",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Messages_Log - Lookup Dedupe": {
+      "main": [
+        [
+          {
+            "node": "Is Duplicate?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Is Duplicate?": {
+      "main": [
+        [
+          {
+            "node": "Respond Deduped",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Messages_Log - Insert Inbound",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Messages_Log - Insert Inbound": {
+      "main": [
+        [
+          {
+            "node": "AI - Intent + Entities",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "AI - Intent + Entities": {
+      "main": [
+        [
+          {
+            "node": "Parse AI Response",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Parse AI Response": {
+      "main": [
+        [
+          {
+            "node": "AI JSON Valid?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "AI JSON Valid?": {
+      "main": [
+        [
+          {
+            "node": "Route by Intent",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Prepare Owner Alert - AI Failure",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Prepare Owner Alert - AI Failure": {
+      "main": [
+        [
+          {
+            "node": "WhatsApp Alert Owner - AI Failure",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Email Alert Owner - AI Failure",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "WhatsApp Alert Owner - AI Failure": {
+      "main": [
+        [
+          {
+            "node": "Prepare Fallback Reply",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Email Alert Owner - AI Failure": {
+      "main": [
+        [
+          {
+            "node": "Prepare Fallback Reply",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Route by Intent": {
+      "main": [
+        [
+          {
+            "node": "Prepare Help Reply",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Call Profit API",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Call Inventory API",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Call Swap API",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Prepare Help Reply",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Prepare Help Reply": {
+      "main": [
+        [
+          {
+            "node": "Merge All Reply Paths",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Call Profit API": {
+      "main": [
+        [
+          {
+            "node": "Merge All Reply Paths",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Call Inventory API": {
+      "main": [
+        [
+          {
+            "node": "Merge All Reply Paths",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Call Swap API": {
+      "main": [
+        [
+          {
+            "node": "Merge All Reply Paths",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Prepare Fallback Reply": {
+      "main": [
+        [
+          {
+            "node": "Merge All Reply Paths",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Merge All Reply Paths": {
+      "main": [
+        [
+          {
+            "node": "Extract Reply Text",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Extract Reply Text": {
+      "main": [
+        [
+          {
+            "node": "WhatsApp Send Message",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "WhatsApp Send Message": {
+      "main": [
+        [
+          {
+            "node": "Messages_Log - Insert Outbound",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ],
+      "error": [
+        [
+          {
+            "node": "Alert Owner - WhatsApp Send Failure",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Alert Owner - WhatsApp Send Failure": {
+      "main": [
+        [
+          {
+            "node": "Messages_Log - Insert Outbound",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Messages_Log - Insert Outbound": {
+      "main": [
+        [
+          {
+            "node": "Respond Success",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "staticData": null,
+  "tags": [],
+  "triggerCount": 1,
+  "updatedAt": "2026-01-31T10:00:00.000Z",
+  "versionId": "1"
+}

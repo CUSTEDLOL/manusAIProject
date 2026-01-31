@@ -1,0 +1,2 @@
+msg_id,channel,direction,from_id,to_id,intent,body,outcome,ts,dedupe_key,is_voice
+74i31,whatsapp,inbound,,,UNKNOWN,,RECEIVED,2026-01-31T04:55:46.746Z,,false

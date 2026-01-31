@@ -1,0 +1,4 @@
+product_id,product_name,supplier,total_stock,allocated,unallocated,reorder_point,daily_usage,cost_jpy
+PRD001,Premium Ceremonial,Uji Farm,245,180,65,50,5.5,12000
+PRD002,Café Grade,Kyoto Farms,180,135,45,30,4.2,8000
+PRD003,Competition Grade,Shizuoka Premium,50,40,10,20,1.5,25000
